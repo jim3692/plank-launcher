@@ -83,21 +83,7 @@ namespace Plank
 				if (app == value)
 					return;
 				
-				if (app != null)
-					app_signals_disconnect (app);
-				
 				app = value;
-				
-				if (app != null) {
-					app_signals_connect (app);
-					initialize_states ();
-					if (app.is_running () && app.is_user_visible ())
-						app_window_added ();
-				} else {
-					reset_application_status ();
-				}
-				
-				unity_update_application_uri ();
 			}
 		}
 		
@@ -145,39 +131,6 @@ namespace Plank
 #endif
 		}
 		
-		void app_signals_connect (Bamf.Application app)
-		{
-			app.active_changed.connect_after (handle_active_changed);
-			app.name_changed.connect_after (handle_name_changed);
-			app.running_changed.connect_after (handle_running_changed);
-			app.urgent_changed.connect_after (handle_urgent_changed);
-			app.user_visible_changed.connect_after (handle_user_visible_changed);
-			app.child_added.connect_after (handle_window_added);
-			app.child_removed.connect_after (handle_window_removed);
-			app.closed.connect_after (handle_closed);
-		}
-		
-		void app_signals_disconnect (Bamf.Application app)
-		{
-			app.active_changed.disconnect (handle_active_changed);
-			app.name_changed.disconnect (handle_name_changed);
-			app.running_changed.disconnect (handle_running_changed);
-			app.urgent_changed.disconnect (handle_urgent_changed);
-			app.user_visible_changed.disconnect (handle_user_visible_changed);
-			app.child_added.disconnect (handle_window_added);
-			app.child_removed.disconnect (handle_window_removed);
-			app.closed.disconnect (handle_closed);
-		}
-		
-		void initialize_states ()
-			requires (App != null)
-		{
-			handle_active_changed (App.is_active ());
-			handle_urgent_changed (App.is_urgent ());
-			
-			update_indicator ();
-		}
-		
 		public bool is_running ()
 		{
 			return (App != null && App.is_running ());
@@ -192,119 +145,8 @@ namespace Plank
 			return (desktop_file == null || desktop_file == "");
 		}
 		
-		void handle_user_visible_changed (bool user_visible)
-		{
-			if (user_visible)
-				app_window_added ();
-			else
-				app_window_removed ();
-		}
-		
-		void handle_closed ()
-		{
-			App = null;
-			
-			app_closed ();
-		}
-		
-		void handle_active_changed (bool is_active)
-		{
-			var was_active = (State & ItemState.ACTIVE) == ItemState.ACTIVE;
-			
-			if (is_active && !was_active) {
-				LastActive = GLib.get_monotonic_time ();
-				State |= ItemState.ACTIVE;
-			} else if (!is_active && was_active) {
-				LastActive = GLib.get_monotonic_time ();
-				State &= ~ItemState.ACTIVE;
-			}
-		}
-		
-		void handle_name_changed (string old_name, string new_name)
-		{
-			// do nothing if name and icon are coming from the desktop-file
-			if (this is TransientDockItem)
-				Text = new_name;
-		}
-		
-		void handle_running_changed (bool is_running)
-		{
-			if (!is_running) {
-				reset_application_status ();
-				return;
-			}
-			
-			update_indicator ();
-			
-			app_window_added ();
-		}
-		
-		public void set_urgent (bool is_urgent)
-		{
-			handle_urgent_changed (is_urgent);
-		}
-		
-		void handle_urgent_changed (bool is_urgent)
-		{
-			var was_urgent = (State & ItemState.URGENT) == ItemState.URGENT;
-			
-			if (is_urgent && !was_urgent) {
-				LastUrgent = GLib.get_monotonic_time ();
-				State |= ItemState.URGENT;
-			} else if (!is_urgent && was_urgent) {
-				State &= ~ItemState.URGENT;
-			}
-		}
-		
-		void handle_window_added (Bamf.View? child)
-		{
-			if (!(child is Bamf.Window))
-				return;
-			
-			update_indicator ();
-			
-			app_window_added ();
-		}
-		
-		void handle_window_removed (Bamf.View? child)
-		{
-			if (!(child is Bamf.Window))
-				return;
-			
-			update_indicator ();
-			
-			app_window_removed ();
-		}
-		
-		void update_indicator ()
-		{
-			//FIXME Do not be silly if the application is running
-			//  we must indicate it, same goes for the opposite.
-			
-			var is_running = is_running ();
-			
-			if (!is_running) {
-				if (Indicator != IndicatorState.NONE)
-					Indicator = IndicatorState.NONE;
-				return;
-			}
-			
-			var window_count = App.get_windows ().length ();
-			
-			if (window_count <= 1) {
-				if (Indicator != IndicatorState.SINGLE)
-					Indicator = IndicatorState.SINGLE;
-			} else {
-				if (Indicator != IndicatorState.SINGLE_PLUS)
-					Indicator = IndicatorState.SINGLE_PLUS;
-			}
-		}
-		
 		inline void reset_application_status ()
 		{
-			handle_urgent_changed (false);
-			handle_active_changed (false);
-			
 			if (Indicator != IndicatorState.NONE)
 				Indicator = IndicatorState.NONE;
 		}
@@ -319,17 +161,9 @@ namespace Plank
 		 */
 		protected override AnimationType on_clicked (PopupButton button, Gdk.ModifierType mod, uint32 event_time)
 		{
-			if (!is_window ())
-				if (button == PopupButton.MIDDLE
-					|| (button == PopupButton.LEFT && (App == null || App.get_windows ().length () == 0
-					|| (mod & Gdk.ModifierType.CONTROL_MASK) == Gdk.ModifierType.CONTROL_MASK))) {
-					launch ();
-					return AnimationType.BOUNCE;
-				}
-			
-			if (button == PopupButton.LEFT && App != null && App.get_windows ().length () > 0) {
-				WindowControl.smart_focus (App, event_time);
-				return AnimationType.DARKEN;
+			if (button == PopupButton.LEFT) {
+				launch ();
+				return AnimationType.BOUNCE;
 			}
 			
 			return AnimationType.NONE;
@@ -743,55 +577,6 @@ namespace Plank
 		}
 		
 		/**
-		 * Update this item's remote libunity value based on the given data
-		 *
-		 * @param sender_name the corressponding dbusname
-		 * @param prop_iter the data in a standardize format from libunity
-		 */
-		public void unity_update (string sender_name, VariantIter prop_iter)
-		{
-			unity_dbusname = sender_name;
-			
-			string prop_key;
-			Variant prop_value;
-			
-			while (prop_iter.next ("{sv}", out prop_key, out prop_value)) {
-				if (prop_key == "count") {
-					var val = prop_value.get_int64 ();
-					if (Count != val)
-						Count = val;
-				} else if (prop_key == "count-visible") {
-					var val = prop_value.get_boolean ();
-					if (CountVisible != val)
-						CountVisible = val;
-				} else if (prop_key == "progress") {
-					var val = nround (prop_value.get_double (), 3U);
-					if (Progress != val)
-						Progress = val;
-				} else if (prop_key == "progress-visible") {
-					var val = prop_value.get_boolean ();
-					if (ProgressVisible != val)
-						ProgressVisible = val;
-				} else if (prop_key == "urgent") {
-					set_urgent (prop_value.get_boolean ());
-#if HAVE_DBUSMENU
-				} else if (prop_key == "quicklist") {
-					/* The value is the object path of the dbusmenu */
-					unowned string dbus_path = prop_value.get_string ();
-					// Make sure we don't update our Quicklist instance if isn't necessary
-					if (Quicklist == null || Quicklist.dbus_object != dbus_path)
-						if (dbus_path != "") {
-							Logger.verbose ("Loading dynamic quicklists for %s (%s)", Text, sender_name);
-							Quicklist = new DbusmenuGtk.Client (sender_name, dbus_path);
-						} else {
-							Quicklist = null;
-						}
-#endif
-				}
-			}
-		}
-		
-		/**
 		 * Reset this item's remote libunity values
 		 */
 		public void unity_reset ()
@@ -802,7 +587,6 @@ namespace Plank
 			CountVisible = false;
 			Progress = 0.0;
 			ProgressVisible = false;
-			set_urgent (false);
 #if HAVE_DBUSMENU
 			Quicklist = null;
 #endif

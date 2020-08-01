@@ -355,8 +355,6 @@ namespace Plank
 			
 			// Update our entry and trigger a redraw
 			if (current_item != null) {
-				current_item.unity_update (sender_name, prop_iter);
-				
 				// Remove item which progress-bar/badge is gone and only existed
 				// because of the presence of this LauncherEntry interface
 				unowned TransientDockItem? transient_item = current_item as TransientDockItem;
@@ -384,7 +382,6 @@ namespace Plank
 				var desktop_file = desktop_file_for_application_uri (app_uri);
 				if (desktop_file != null) {
 					current_item = new TransientDockItem.with_launcher (desktop_file.get_uri ());
-					current_item.unity_update (sender_name, prop_iter);
 					
 					// Only add item if there is actually a visible progress-bar or badge
 					// or the backing application provides a quicklist-dbusmenu
